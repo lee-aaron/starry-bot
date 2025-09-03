@@ -1,26 +1,31 @@
 {
-  "name": "starry-bot",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
-  },
-  "devDependencies": {
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "~5.6.2",
-    "vite": "^6.0.3",
-    "@tauri-apps/cli": "^2"
-  }
+	"name": "starry-bot",
+	"version": "0.1.0",
+	"description": "",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"core/*"
+	],
+	"scripts": {
+		"dev:core": "tauri dev",
+		"dev:web": "node scripts/buildNumber.cjs alpha true && npm run dev -w web",
+		"build:core": "node scripts/buildNumber.cjs release false && tauri build",
+		"build:web": "node scripts/buildNumber.cjs release false && npm run build -w web",
+		"check": "npm run check",
+		"rename": "node scripts/rename.js",
+		"tauri": "tauri"
+	},
+	"devDependencies": {
+		"@tauri-apps/cli": "^2.6.2",
+		"cross-env": "^7.0.3",
+		"prettier": "^3.5.3",
+		"svelte": "^5.35.2"
+	},
+	"dependencies": {
+		"@tauri-apps/plugin-sql": "~2.3.0",
+		"@tauri-apps/plugin-websocket": "~2",
+		"prettier-plugin-svelte": "^3.4.0",
+		"prettier-plugin-tailwindcss": "^0.6.13"
+	}
 }
