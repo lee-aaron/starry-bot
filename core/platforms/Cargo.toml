@@ -9,6 +9,9 @@ tokio = { workspace = true }
 bit-vec = "0.8"
 tao = "0.33.0"
 softbuffer = "0.4.6"
+parking_lot = "0.12.4"
+windows-future = "0.2.1"
+rayon = "1.11.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
@@ -16,6 +19,7 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Graphics_Imaging",
   "Graphics_Capture",
   "Graphics_DirectX_Direct3D11",
   "Win32_Graphics_Gdi",
@@ -27,6 +31,13 @@ windows = { version = "0.61.3", features = [
   "Win32_System_WinRT_Graphics_Capture",
   "Win32_System_WinRT_Direct3D11",
   "Win32_System_Threading",
+  "Win32_System_ProcessStatus",
+  "Win32_Devices_Display",
   "System",
+  "Security_Cryptography",
+  "Storage_Streams",
+  "Media_Transcoding",
+  "Media_MediaProperties",
+  "Media_Core",
+  "Foundation_Metadata"
 ] }
-

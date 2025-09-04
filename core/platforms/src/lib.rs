@@ -5,6 +5,7 @@ use crate::windows::{Handle, HandleKind, client_to_monitor_or_frame};
 
 pub mod capture;
 pub mod input;
+pub mod windows_capture;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
