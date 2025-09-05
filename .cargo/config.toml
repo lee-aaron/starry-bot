@@ -1,2 +1,5 @@
+[env]
+OPENCV_MSVC_CRT = "static"
+
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-Ctarget-feature=+crt-static"]

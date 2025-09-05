@@ -17,6 +17,7 @@ platforms = { path = "../platforms" }
 tokio = { workspace = true }
 async-trait = "0.1.89"
 image = { version = "0.25.6", features = ["webp"] }
+opencv = { version = "0.95.1", default-features = false, features = ["dnn", "imgcodecs", "imgproc", "highgui"] }
 chrono = "0.4.41"
 
 [features]

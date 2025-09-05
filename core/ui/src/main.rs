@@ -1,6 +1,6 @@
 use iced::widget::{button, column, container, pick_list, text, image, row};
 use iced::{Element, Fill, Length, Task, Theme, Subscription};
-use interface::{list_window_handles, services::{GraphicsCaptureService, MinimapServiceV2}};
+use interface::{list_window_handles, services::{GraphicsCaptureService, MinimapServiceV2, ServiceState}};
 use std::sync::Arc;
 use tokio_stream::{wrappers::WatchStream, StreamExt};
 
@@ -30,9 +30,10 @@ pub enum Message {
     CaptureError(String),
     FrameReceived(Option<Vec<u8>>),
     CheckServiceStatus,
-    ServiceStatusChecked(bool, Option<String>),
+    ServiceStatusChecked(ServiceState),
     ShowMetrics,
     MetricsReceived(Option<String>),
+    UpdateMetrics,
     DxgiModeResult(Result<(), String>),
 }
 
@@ -41,10 +42,10 @@ pub struct StarryApp {
     minimap_service: MinimapServiceV2,
     available_windows: Vec<String>,
     selected_window: Option<String>,
-    service_running: bool,
-    service_stopping: bool,
+    service_state: ServiceState,
     current_frame: Option<image::Handle>,
     error_message: Option<String>,
+    metrics_text: Option<String>,
 }
 
 impl Default for StarryApp {
@@ -57,10 +58,10 @@ impl Default for StarryApp {
             minimap_service,
             available_windows: Vec::new(),
             selected_window: None,
-            service_running: false,
-            service_stopping: false,
+            service_state: ServiceState::Stopped,
             current_frame: None,
             error_message: None,
+            metrics_text: None,
         }
     }
 }
@@ -119,6 +120,7 @@ impl StarryApp {
             },
             Message::StartCapture => {
                 if let Some(window_title) = &self.selected_window {
+                    self.service_state = ServiceState::Starting;
                     self.error_message = None; // Clear any previous errors
                     let service = self.minimap_service.clone();
                     let window_title = window_title.clone();
@@ -137,25 +139,25 @@ impl StarryApp {
                 }
             },
             Message::StopCapture => {
-                if self.service_stopping {
-                    // Already stopping, ignore additional stop requests
-                    return Task::none();
+                // Only stop if not already stopping
+                if self.service_state != ServiceState::Stopping {
+                    self.service_state = ServiceState::Stopping;
+                    let service = self.minimap_service.clone();
+                    Task::perform(
+                        async move {
+                            match service.stop_capture().await {
+                                Ok(_) => Message::CaptureStopped,
+                                Err(e) => Message::CaptureError(e),
+                            }
+                        },
+                        |result| result,
+                    )
+                } else {
+                    Task::none()
                 }
-                
-                self.service_stopping = true;
-                let service = self.minimap_service.clone();
-                Task::perform(
-                    async move {
-                        match service.stop_capture().await {
-                            Ok(_) => Message::CaptureStopped,
-                            Err(e) => Message::CaptureError(e),
-                        }
-                    },
-                    |result| result,
-                )
             },
             Message::CaptureStarted => {
-                self.service_running = true;
+                self.service_state = ServiceState::Running;
                 self.error_message = None;
                 
                 println!("✅ Capture started successfully!");
@@ -183,24 +185,20 @@ impl StarryApp {
                     // Check service status
                     Task::perform(
                         async move {
-                            let is_capturing = service2.is_capturing().await;
-                            let current_window = service2.get_current_window_title().await;
-                            (is_capturing, current_window)
+                            service2.get_service_state().await
                         },
-                        |(is_capturing, current_window)| Message::ServiceStatusChecked(is_capturing, current_window),
+                        Message::ServiceStatusChecked,
                     ),
                 ])
             },
             Message::CaptureStopped => {
-                self.service_running = false;
-                self.service_stopping = false;
+                self.service_state = ServiceState::Stopped;
                 self.current_frame = None;
                 self.error_message = None;
                 Task::none()
             },
             Message::CaptureError(error) => {
-                self.service_running = false;
-                self.service_stopping = false;
+                self.service_state = ServiceState::Stopped;
                 self.current_frame = None;
                 self.error_message = Some(error);
                 Task::none()
@@ -209,26 +207,14 @@ impl StarryApp {
                 let service = self.minimap_service.clone();
                 Task::perform(
                     async move {
-                        let is_capturing = service.is_capturing().await;
-                        let current_window = service.get_current_window_title().await;
-                        (is_capturing, current_window)
+                        service.get_service_state().await
                     },
-                    |(is_capturing, current_window)| Message::ServiceStatusChecked(is_capturing, current_window),
+                    Message::ServiceStatusChecked,
                 )
             },
-            Message::ServiceStatusChecked(is_capturing, current_window) => {
+            Message::ServiceStatusChecked(service_state) => {
                 // Synchronize UI state with actual service state
-                self.service_running = is_capturing;
-                if let Some(window_title) = current_window {
-                    if !self.available_windows.contains(&window_title) {
-                        // Window might have been closed, refresh the list
-                        return Task::perform(async { list_window_handles() }, Message::WindowsRefreshed);
-                    }
-                    self.selected_window = Some(window_title);
-                } else if !is_capturing {
-                    // Service stopped but UI doesn't know why
-                    self.current_frame = None;
-                }
+                self.service_state = service_state;
                 Task::none()
             },
             Message::FrameReceived(frame_data) => {
@@ -250,13 +236,26 @@ impl StarryApp {
             },
             Message::MetricsReceived(metrics) => {
                 if let Some(metrics_text) = metrics {
-                    println!("\n{}", metrics_text);
-                    
-                    // Also show graphics service metrics separately
+                    // Store metrics for display in debug panel instead of printing to console
                     let graphics_metrics = self.graphics_service.get_metrics();
-                    println!("\n📊 Graphics Service Only:\n{}", graphics_metrics);
+                    let combined_metrics = format!("{}\n\n📊 Graphics Service:\n{}", metrics_text, graphics_metrics);
+                    self.metrics_text = Some(combined_metrics);
                 }
                 Task::none()
+            },
+            Message::UpdateMetrics => {
+                // Auto-update metrics every 3-5 seconds
+                if self.service_state == ServiceState::Running {
+                    let service = self.minimap_service.clone();
+                    Task::perform(
+                        async move {
+                            service.get_performance_metrics()
+                        },
+                        Message::MetricsReceived,
+                    )
+                } else {
+                    Task::none()
+                }
             },
             Message::DxgiModeResult(result) => {
                 match result {
@@ -275,7 +274,7 @@ impl StarryApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let frame_subscription = if self.service_running {
+        let frame_subscription = if self.service_state == ServiceState::Running {
             // Create a subscription that listens to frame updates using WatchStream
             let receiver = self.minimap_service.get_frame_receiver();
             
@@ -290,7 +289,15 @@ impl StarryApp {
         let status_check_subscription = iced::time::every(std::time::Duration::from_secs(2))
             .map(|_| Message::CheckServiceStatus);
 
-        Subscription::batch([frame_subscription, status_check_subscription])
+        // Auto-update metrics every 4 seconds when running
+        let metrics_update_subscription = if self.service_state == ServiceState::Running {
+            iced::time::every(std::time::Duration::from_secs(4))
+                .map(|_| Message::UpdateMetrics)
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch([frame_subscription, status_check_subscription, metrics_update_subscription])
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -340,41 +347,52 @@ impl StarryApp {
         ]
         .spacing(10);
 
-        let capture_controls = if self.service_running && !self.service_stopping {
-            column![
-                button("Stop Capture")
-                    .on_press(Message::StopCapture)
-                    .width(Length::Fill),
-                button("Show Performance Metrics")
-                    .on_press(Message::ShowMetrics)
-                    .width(Length::Fill)
-            ].spacing(5)
-        } else if self.service_stopping {
-            column![
-                button("Stopping...")
-                    .width(Length::Fill), // Disabled button while stopping
-                button("Show Performance Metrics")
-                    .on_press(Message::ShowMetrics)
-                    .width(Length::Fill)
-            ].spacing(5)
-        } else {
-            column![
-                button("Start Capture")
-                    .on_press_maybe(self.selected_window.as_ref().map(|_| Message::StartCapture))
-                    .width(Length::Fill)
-            ]
+        let capture_controls = match self.service_state {
+            ServiceState::Running => {
+                column![
+                    button("Stop Capture")
+                        .on_press(Message::StopCapture)
+                        .width(Length::Fill),
+                    button("Show Performance Metrics")
+                        .on_press(Message::ShowMetrics)
+                        .width(Length::Fill)
+                ].spacing(5)
+            },
+            ServiceState::Stopping => {
+                column![
+                    button("Stopping...")
+                        .width(Length::Fill), // Disabled button while stopping
+                    button("Show Performance Metrics")
+                        .on_press(Message::ShowMetrics)
+                        .width(Length::Fill)
+                ].spacing(5)
+            },
+            ServiceState::Starting => {
+                column![
+                    button("Starting...")
+                        .width(Length::Fill), // Disabled button while starting
+                ].spacing(5)
+            },
+            ServiceState::Stopped => {
+                column![
+                    button("Start Capture")
+                        .on_press_maybe(self.selected_window.as_ref().map(|_| Message::StartCapture))
+                        .width(Length::Fill)
+                ]
+            }
         };
 
-        let status_text = if self.service_stopping {
-            "Stopping minimap capture...".to_string()
-        } else if self.service_running {
-            if let Some(window) = &self.selected_window {
-                format!("Minimap capture is running ({})", window)
-            } else {
-                "Minimap capture is running".to_string()
-            }
-        } else {
-            "Minimap capture is stopped".to_string()
+        let status_text = match self.service_state {
+            ServiceState::Stopping => "Stopping minimap capture...".to_string(),
+            ServiceState::Starting => "Starting minimap capture...".to_string(),
+            ServiceState::Running => {
+                if let Some(window) = &self.selected_window {
+                    format!("Minimap capture is running ({})", window)
+                } else {
+                    "Minimap capture is running".to_string()
+                }
+            },
+            ServiceState::Stopped => "Minimap capture is stopped".to_string(),
         };
 
         let error_display = if let Some(error) = &self.error_message {
@@ -415,14 +433,23 @@ impl StarryApp {
         // Debug panel - only show in debug builds as a separate right panel
         #[cfg(debug_assertions)]
         {
+            let metrics_display = self.metrics_text.as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("Click 'Show Performance Metrics' to see data");
+                
             let debug_panel = container(
                 column![
                     text("🐛 Debug Panel").size(16).color([0.8, 0.4, 0.4]),
                     text(format!("Build: Debug")).size(12).color([0.6, 0.6, 0.6]),
                     text(format!("Selected Window: {:?}", self.selected_window)).size(12).color([0.6, 0.6, 0.6]),
-                    text(format!("Service Running: {}", self.service_running)).size(12).color([0.6, 0.6, 0.6]),
+                    text(format!("Service State: {:?}", self.service_state)).size(12).color([0.6, 0.6, 0.6]),
                     text(format!("Error Message: {:?}", self.error_message)).size(12).color([0.6, 0.6, 0.6]),
                     text(format!("Available Windows: {}", self.available_windows.len())).size(12).color([0.6, 0.6, 0.6]),
+                    text("").size(8), // Spacer
+                    text("📊 Performance Metrics:").size(14).color([0.4, 0.8, 0.4]),
+                    text(metrics_display)
+                        .size(10)
+                        .color([0.8, 0.8, 0.8])
                 ]
                 .spacing(5)
                 .padding(10)

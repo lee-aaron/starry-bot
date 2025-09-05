@@ -11,28 +11,21 @@ use platforms::windows_capture::{
     },
     window::Window,
     dxgi_desktop_duplication::{DxgiDesktopDuplication, DxgiError},
-    texture_processor::{TextureProcessor, FrameFormat as PlatformFrameFormat},
+    texture_processor::TextureProcessor,
 };
 use tokio::sync::{broadcast, Mutex};
 
-/// Raw frame data with metadata
+/// Raw frame data with metadata (komari-style: always BGRA)
 #[derive(Clone, Debug)]
 pub struct CapturedFrame {
-    pub data: Vec<u8>,
+    pub data: Vec<u8>,         // Always BGRA format (4 bytes per pixel)
     pub width: u32,
     pub height: u32,
-    pub format: FrameFormat,
     pub timestamp: Instant,
     pub source: CaptureSource,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum FrameFormat {
-    Bgra8,
-    Rgba8,
-    Rgb8,
-    Jpeg,
-}
+
 
 #[derive(Clone, Debug)]
 pub enum CaptureSource {
@@ -119,28 +112,19 @@ impl GraphicsCaptureApiHandler for FrameHandler {
     ) -> Result<(), Self::Error> {
         let capture_start = Instant::now();
 
-        // Fast frame processing - minimal work in capture callback
         if let Ok(mut frame_buffer) = frame.buffer() {
             let width = frame_buffer.width();
             let height = frame_buffer.height();
             
             if let Ok(buffer) = frame_buffer.as_nopadding_buffer() {
-                // Convert BGRA to RGBA efficiently
-                let mut rgba_data = Vec::with_capacity(buffer.len());
-                for chunk in buffer.chunks_exact(4) {
-                    rgba_data.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]);
-                }
-                
                 let captured_frame = CapturedFrame {
-                    data: rgba_data,
+                    data: buffer.to_vec(),
                     width,
                     height,
-                    format: FrameFormat::Rgba8,
                     timestamp: capture_start,
                     source: CaptureSource::WindowsGraphicsCapture,
                 };
 
-                // Broadcast to all subscribers (non-blocking)
                 let subscriber_count = self.frame_broadcast.receiver_count();
                 self.metrics.active_subscribers.store(subscriber_count, Ordering::Relaxed);
                 
@@ -162,7 +146,6 @@ impl GraphicsCaptureApiHandler for FrameHandler {
     }
 }
 
-/// DXGI Desktop Duplication for high-performance capture
 struct DxgiCapture {
     duplication: DxgiDesktopDuplication,
     texture_processor: TextureProcessor,
@@ -202,12 +185,11 @@ impl DxgiCapture {
                 Ok(Some(texture)) => {
                     // Use platforms-based texture processing
                     if let Ok(processed_frame) = self.texture_processor.extract_frame_data(&texture) {
-                        // Convert from platforms format to interface format
+                        // Convert from platforms format to interface format (always BGRA)
                         let frame_data = CapturedFrame {
                             data: processed_frame.data,
                             width: processed_frame.width,
                             height: processed_frame.height,
-                            format: self.convert_platform_format(processed_frame.format),
                             timestamp: processed_frame.timestamp,
                             source: CaptureSource::DxgiDesktopDuplication,
                         };
@@ -248,35 +230,6 @@ impl DxgiCapture {
             
             // Small delay to target ~30 FPS
             tokio::time::sleep(Duration::from_millis(33)).await;
-        }
-    }
-
-    pub async fn capture_frame_for_minimap(&mut self) -> Result<CapturedFrame, String> {
-        // Use the DXGI capture_frame_for_minimap method which handles texture processing internally
-        let processed_frame = self.duplication.capture_frame_for_minimap()
-            .map_err(|e| format!("Failed to capture frame for minimap: {}", e))?;
-        
-        if let Some(frame) = processed_frame {
-            // Convert from platforms format to interface format
-            Ok(CapturedFrame {
-                data: frame.data,
-                width: frame.width,
-                height: frame.height,
-                format: self.convert_platform_format(frame.format),
-                timestamp: frame.timestamp,
-                source: CaptureSource::DxgiDesktopDuplication,
-            })
-        } else {
-            Err("No frame available".to_string())
-        }
-    }
-    
-    fn convert_platform_format(&self, format: PlatformFrameFormat) -> FrameFormat {
-        match format {
-            PlatformFrameFormat::Bgra8 => FrameFormat::Bgra8,
-            PlatformFrameFormat::Rgba8 => FrameFormat::Rgba8,
-            PlatformFrameFormat::Rgb8 => FrameFormat::Rgb8,
-            PlatformFrameFormat::Jpeg => FrameFormat::Jpeg,
         }
     }
 }

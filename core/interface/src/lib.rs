@@ -3,7 +3,7 @@ use platforms::windows_capture::window::Window;
 pub mod services;
 
 // Public API for the interface library
-pub use services::{Service, GraphicsCaptureService, MinimapServiceV2, ImageProcessingService};
+pub use services::{Service, GraphicsCaptureService, MinimapServiceV2};
 
 /// Initialize the platforms subsystem
 pub fn init() {

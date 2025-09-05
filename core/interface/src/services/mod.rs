@@ -1,11 +1,9 @@
 
 mod graphics_capture;
-mod minimap_v2;
-mod image_processing;
+pub mod minimap_v2;
 
 pub use graphics_capture::GraphicsCaptureService;
-pub use minimap_v2::MinimapService as MinimapServiceV2;
-pub use image_processing::ImageProcessingService;
+pub use minimap_v2::{MinimapService as MinimapServiceV2, ServiceState};
 
 #[async_trait::async_trait]
 pub trait Service: Send + Sync {
